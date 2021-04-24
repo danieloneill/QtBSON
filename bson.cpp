@@ -106,9 +106,10 @@ void BSON::parseVariant(const QVariant &v, QByteArray *result, int indents, cons
         result->append( keyname.toStdString().c_str(), keyname.length()+1 );
 
         // Special handling for UTF-8 strings:
-        qint32 slen = asstr.length()+1;
+	QByteArray asba = asstr.toLocal8Bit();
+        qint32 slen = asba.length()+1;
         result->append( (const char *)&slen, sizeof(slen) );
-        result->append( asstr.toStdString().c_str(), slen );
+        result->append( asba.constData(), slen );
     }
     else if( 0 == strcmp( "QByteArray", typeName ) )
     {
@@ -117,7 +118,6 @@ void BSON::parseVariant(const QVariant &v, QByteArray *result, int indents, cons
         result->append( '\x05' );
         result->append( keyname.toStdString().c_str(), keyname.length()+1 );
 
-        // Special handling for UTF-8 strings:
         qint32 slen = asba.length();
         result->append( (const char *)&slen, sizeof(slen) );
         result->append( '\x00' );
