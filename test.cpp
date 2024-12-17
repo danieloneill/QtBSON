@@ -1,4 +1,7 @@
+#include <QDateTime>
 #include <QDebug>
+#include <QFile>
+
 #include "bson.h"
 
 void runtests()
@@ -33,17 +36,23 @@ void runtests()
     qDebug() << m;
     QByteArray result = bson.toBSON(m);
 
-    QFile f("/tmp/test.bson");
+    QFile f("test.bson");
     f.open(QIODevice::ReadWrite|QIODevice::Truncate);
     f.write(result);
     f.close();
 
-    QVariantMap rebuilt = bson.fromBSON(result);
+    BSON::Error err;
+
+    QVariantMap rebuilt = bson.fromBSON(result, &err);
+    qDebug() << err;
     qDebug() << rebuilt;
 }
 
 int main(int argc, char **argv)
 {
+    Q_UNUSED(argc)
+    Q_UNUSED(argv)
+
     runtests();
 
     return 0;

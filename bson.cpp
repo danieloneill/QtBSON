@@ -1,5 +1,11 @@
 #include "bson.h"
 
+#include <QDateTime>
+#include <QDebug>
+#include <QFile>
+#include <QList>
+#include <QTimeZone>
+
 #define MAXSIZE 32768
 
 BSON::BSON(QObject *parent) : QObject(parent)
@@ -20,19 +26,20 @@ void BSON::parseVariant(const QVariant &v, QByteArray *result, int indents, cons
 {
     QString indentStr = QString(" ").repeated(indents);
     const char *typeName = v.typeName();
+    int typeId = v.typeId();
 
     QString keyname = myname.value<QString>();
 
     if( v.isNull() )
         return insertNULL(result, keyname);
 
-    if( 0 == strcmp( "QVariantMap", typeName ) )
+    qint32 doclen = 0;
+    if( QMetaType::QVariantMap == typeId )
     {
         result->append( '\x03' );
         result->append( keyname.toStdString().c_str(), keyname.length()+1 );
 
         QByteArray intresult;
-        qint32 doclen = 0;
         intresult.append( (const char *)&doclen, sizeof(doclen) );
 
         QVariantMap asmap = v.value<QVariantMap>();
@@ -45,16 +52,15 @@ void BSON::parseVariant(const QVariant &v, QByteArray *result, int indents, cons
         intresult.append( '\x00' );
         intresult.shrink_to_fit();
         doclen = intresult.length();
-        intresult.replace( 0, sizeof(doclen), (const char *)&doclen, sizeof(doclen) );
+        intresult.replace( (int)0, sizeof(doclen), (const char *)&doclen, sizeof(doclen) );
         result->append( intresult );
     }
-    else if( 0 == strcmp( "QVariantList", typeName ) )
+    else if( QMetaType::QVariantList == typeId )
     {
         result->append( '\x04' );
         result->append( keyname.toStdString().c_str(), keyname.length()+1 );
 
         QByteArray intresult;
-        qint32 doclen = 0;
         intresult.append( (const char *)&doclen, sizeof(doclen) );
 
         int listidx = 0;
@@ -69,17 +75,17 @@ void BSON::parseVariant(const QVariant &v, QByteArray *result, int indents, cons
         intresult.append( '\x00' );
         intresult.shrink_to_fit();
         doclen = intresult.length();
-        intresult.replace( 0, sizeof(doclen), (const char *)&doclen, sizeof(doclen) );
+        intresult.replace( (int)0, sizeof(doclen), (const char *)&doclen, sizeof(doclen) );
         result->append( intresult );
     }
-    else if( 0 == strcmp( "bool", typeName ) )
+    else if( QMetaType::Bool == typeId )
     {
         //qDebug() << indentStr << "[B]" << v.value<bool>();
         result->append( '\x08' );
         result->append( keyname.toStdString().c_str(), keyname.length()+1 );
         result->append( v.value<bool>() ? '\x01' : '\x00' );
     }
-    else if( 0 == strcmp( "int", typeName ) )
+    else if( QMetaType::Int == typeId )
     {
         qint64 asint = v.value<qint64>();
         //qDebug() << indentStr << "[I]" << asint;
@@ -87,7 +93,7 @@ void BSON::parseVariant(const QVariant &v, QByteArray *result, int indents, cons
         result->append( keyname.toStdString().c_str(), keyname.length()+1 );
         result->append( (const char *)&asint, sizeof(asint) );
     }
-    else if( 0 == strcmp( "double", typeName ) )
+    else if( QMetaType::Double == typeId )
     {
         double asdouble = v.value<double>();
         //qDebug() << indentStr << "[D]" << asdouble;
@@ -95,7 +101,7 @@ void BSON::parseVariant(const QVariant &v, QByteArray *result, int indents, cons
         result->append( keyname.toStdString().c_str(), keyname.length()+1 );
         result->append( (const char *)&asdouble, sizeof(asdouble) );
     }
-    else if( 0 == strcmp( "QString", typeName ) )
+    else if( QMetaType::QString == typeId )
     {
         QString asstr = v.value<QString>();
         if( asstr.isNull() )
@@ -105,13 +111,12 @@ void BSON::parseVariant(const QVariant &v, QByteArray *result, int indents, cons
         result->append( '\x02' );
         result->append( keyname.toStdString().c_str(), keyname.length()+1 );
 
-        // Special handling for UTF-8 strings:
-	QByteArray asba = asstr.toLocal8Bit();
-        qint32 slen = asba.length()+1;
+        QByteArray asba = asstr.toLocal8Bit();
+        qint32 slen = asba.length();
         result->append( (const char *)&slen, sizeof(slen) );
         result->append( asba.constData(), slen );
     }
-    else if( 0 == strcmp( "QByteArray", typeName ) )
+    else if( QMetaType::QByteArray == typeId )
     {
         QByteArray asba = v.value<QByteArray>();
         //qDebug() << indentStr << "[BIN]" << asba.length();
@@ -123,7 +128,7 @@ void BSON::parseVariant(const QVariant &v, QByteArray *result, int indents, cons
         result->append( '\x00' );
         result->append( asba.constData(), slen );
     }
-    else if( 0 == strcmp( "QDateTime", typeName ) )
+    else if( QMetaType::QDateTime == typeId )
     {
         QDateTime asdt = v.value<QDateTime>();
         qint64 asint = asdt.toMSecsSinceEpoch();
@@ -132,9 +137,28 @@ void BSON::parseVariant(const QVariant &v, QByteArray *result, int indents, cons
         result->append( keyname.toStdString().c_str(), keyname.length()+1 );
         result->append( (const char *)&asint, sizeof(asint) );
     }
+#ifdef QJSValue
+    else if( v.canConvert<QJSValue>() )
+    {
+        QJSValue asval = v.value<QJSValue>();
+        if( asval.isNull() )
+            return insertNULL(result, keyname);
+
+        QString asstr = asval.toString();
+
+        //qDebug() << indentStr << "[S]" << asstr;
+        result->append( '\x02' );
+        result->append( keyname.toStdString().c_str(), keyname.length()+1 );
+
+        QByteArray asba = asstr.toLocal8Bit();
+        qint32 slen = asba.length();
+        result->append( (const char *)&slen, sizeof(slen) );
+        result->append( asba.constData(), slen );
+    }
+#endif
     else
     {
-        qDebug() << indentStr << "(Unknown type:" << typeName << ")";
+        qDebug() << indentStr << "(Unknown type:" << typeName << ")" << typeId;
         return insertNULL(result, keyname);
     }
 }
@@ -154,11 +178,11 @@ QByteArray BSON::toBSON(const QVariantMap &asmap)
     result.append( '\x00' );
     result.shrink_to_fit();
     doclen = result.length();
-    result.replace( 0, sizeof(doclen), (const char *)&doclen, sizeof(doclen) );
+    result.replace( (int)0, sizeof(doclen), (const char *)&doclen, sizeof(doclen) );
     return result;
 }
 
-char *BSON::parseBSONValue( QVariantMap *dest, char *cursor, char *end )
+char *BSON::parseBSONValue(QVariantMap *dest, char *cursor, char *end , Error *errPtr)
 {
     quint8 code = cursor[0];
     cursor++;
@@ -199,7 +223,10 @@ char *BSON::parseBSONValue( QVariantMap *dest, char *cursor, char *end )
         // Make sure we don't overrun:
         if( origPos+doclen > end )
         {
-            qDebug() << "Document is too long for our defined section, so sad.";
+            if( errPtr )
+                errPtr[0] = BSON::ContentTruncated;
+            else
+                qDebug() << "Document is too long for our defined section, so sad.";
             return NULL;
         }
 
@@ -207,13 +234,16 @@ char *BSON::parseBSONValue( QVariantMap *dest, char *cursor, char *end )
 
         if( sentinel[0] != '\x00' )
         {
-            qDebug() << "Failed to find document ending signature.";
+            if( errPtr )
+                errPtr[0] = BSON::ContentTruncated;
+            else
+                qDebug() << "Failed to find document ending signature.";
             return NULL;
         }
 
         while( cursor && cursor < sentinel )
         {
-            cursor = parseBSONValue( &intres, cursor, sentinel );
+            cursor = parseBSONValue( &intres, cursor, sentinel, errPtr );
             //fprintf(stderr, "Cursor is at %p, and we stop at %p.\n", cursor, origPos + doclen - 1 );
         }
 
@@ -233,7 +263,10 @@ char *BSON::parseBSONValue( QVariantMap *dest, char *cursor, char *end )
         // Make sure we don't overrun:
         if( origPos+doclen > end )
         {
-            qDebug() << "List is too long for our defined section, so sad.";
+            if( errPtr )
+                errPtr[0] = BSON::ContentTruncated;
+            else
+                qDebug() << "List is too long for our defined section, so sad.";
             return NULL;
         }
 
@@ -241,13 +274,16 @@ char *BSON::parseBSONValue( QVariantMap *dest, char *cursor, char *end )
 
         if( sentinel[0] != '\x00' )
         {
-            qDebug() << "Failed to find document ending signature.";
+            if( errPtr )
+                errPtr[0] = BSON::ContentTruncated;
+            else
+                qDebug() << "Failed to find document ending signature.";
             return NULL;
         }
 
         while( cursor && cursor < sentinel )
         {
-            cursor = parseBSONValue( &intres, cursor, sentinel );
+            cursor = parseBSONValue( &intres, cursor, sentinel, errPtr );
             //fprintf(stderr, "Cursor is at %p, and we stop at %p.\n", cursor, origPos + doclen - 1 );
         }
 
@@ -268,7 +304,10 @@ char *BSON::parseBSONValue( QVariantMap *dest, char *cursor, char *end )
         // Make sure we don't overrun:
         if( cursor+len > end )
         {
-            qDebug() << "Binary block is too long for our defined section, so sad.";
+            if( errPtr )
+                errPtr[0] = BSON::ContentTruncated;
+            else
+                qDebug() << "Binary block is too long for our defined section, so sad.";
             return NULL;
         }
 
@@ -291,7 +330,7 @@ char *BSON::parseBSONValue( QVariantMap *dest, char *cursor, char *end )
         int64_t val;
         memcpy( &val, cursor, sizeof(int64_t) );
         cursor += sizeof(int64_t);
-        QDateTime t = QDateTime::fromMSecsSinceEpoch(val, Qt::UTC);
+        QDateTime t = QDateTime::fromMSecsSinceEpoch(val, QTimeZone::UTC);
         dest->insert( elemname, t );
         //qDebug() << "Datetime: " << t;
     }
@@ -311,9 +350,12 @@ char *BSON::parseBSONValue( QVariantMap *dest, char *cursor, char *end )
     return cursor;
 }
 
-QVariantMap BSON::fromBSON(const QByteArray &ba)
+QVariantMap BSON::fromBSON(const QByteArray &ba, BSON::Error *errPtr)
 {
     QVariantMap result;
+
+    if( errPtr )
+        errPtr[0] = BSON::NoError;
 
     char *cursor = (char*)ba.data();
     // Sanitize:
@@ -323,32 +365,44 @@ QVariantMap BSON::fromBSON(const QByteArray &ba)
 
     if( doclen > MAXSIZE || ba.length() > MAXSIZE )
     {
-        qDebug() << "Packet length specified to be" << doclen << "which is larger than the allowed" << MAXSIZE;
+        if( errPtr )
+            errPtr[0] = BSON::TooLarge;
+        else
+            qDebug() << "Packet length specified to be" << doclen << "which is larger than the allowed" << MAXSIZE;
         return result;
     }
 
     if( ba.length() != doclen )
     {
-        qDebug() << "Size mismatch: Expected" << doclen << "but packet is" << ba.length() << "bytes.";
+        if( errPtr )
+            errPtr[0] = BSON::LengthMismatch;
+        else
+            qDebug() << "Size mismatch: Expected" << doclen << "but packet is" << ba.length() << "bytes.";
         return result;
     }
 
     char *sentinel = ((char*)ba.constData()) + doclen - 1;
     if( ba.length() < (sentinel-cursor) )
     {
-        qDebug() << "Size mismatch: Expected" << (sentinel-cursor) << "but packet is" << ba.length() << "bytes.";
+        if( errPtr )
+            errPtr[0] = BSON::LengthMismatch;
+        else
+            qDebug() << "Size mismatch: Expected" << (sentinel-cursor) << "but packet is" << ba.length() << "bytes.";
         return result;
     }
 
     if( ba.at( doclen-1 ) != '\x00' )
     {
-        qDebug() << "Failed to find document ending signature.";
+        if( errPtr )
+            errPtr[0] = BSON::ContentTruncated;
+        else
+            qDebug() << "Failed to find document ending signature.";
         return result;
     }
 
     while( cursor && cursor < sentinel )
     {
-        cursor = parseBSONValue( &result, cursor, sentinel );
+        cursor = parseBSONValue( &result, cursor, sentinel, errPtr );
         //fprintf(stderr, "Cursor is at %p, and we stop at %p.\n", cursor, ba.constData() + doclen - 1 );
     }
 
