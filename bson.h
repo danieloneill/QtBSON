@@ -2,7 +2,6 @@
 #define BSON_H
 
 #include <QByteArray>
-#include <QJsonParseError>
 #include <QObject>
 #include <QString>
 #include <QVariantList>
